@@ -46,26 +46,27 @@ class StatbotClient:
         await self.session.close()
 
     async def fetch_voice_stats(self, days: int) -> VoiceStats:
-        query = self._build_voice_query(days)
-        url = f"{self.base_url}/guilds/{self.guild_id}/voice"
+        stats = VoiceStats(days=days)
+        page = 1
+        page_size = 100
 
-        try:
-            async with self.session.post(
-                url,
-                json={"query": query},
-                headers=self.headers,
-            ) as response:
-                body = await response.text()
-                if response.status >= 400:
-                    raise StatbotHTTPError(response.status, body)
-        except asyncio.TimeoutError as exc:
-            raise StatbotError("Statbot API request timed out") from exc
-        except aiohttp.ClientError as exc:
-            raise StatbotError(f"Could not reach Statbot API: {exc}") from exc
+        while True:
+            payload = await self._request_json(
+                f"/v1/guilds/{self.guild_id}/voice/tops/members",
+                params=self._build_voice_top_params(
+                    days,
+                    page=page,
+                    page_size=page_size,
+                ),
+            )
+            members = self._extract_members(payload)
+            if not members:
+                break
 
-        stats = self._parse_response(body, days)
-        if not stats.has_activity:
-            return stats
+            self._merge_members(stats, members)
+            if len(members) < page_size:
+                break
+            page += 1
 
         stats.top_members.sort(key=lambda item: item.minutes, reverse=True)
         for index, member in enumerate(stats.top_members, start=1):
@@ -76,9 +77,42 @@ class StatbotClient:
             stats.active_member_count = len(stats.active_member_ids)
         return stats
 
+    async def _request_json(
+        self,
+        path: str,
+        *,
+        params: list[tuple[str, str]] | None = None,
+    ) -> Any:
+        try:
+            async with self.session.get(
+                self._api_url(path),
+                params=params,
+                headers=self.headers,
+            ) as response:
+                body = await response.text()
+                if response.status >= 400:
+                    raise StatbotHTTPError(response.status, body)
+        except asyncio.TimeoutError as exc:
+            raise StatbotError("Statbot API request timed out") from exc
+        except aiohttp.ClientError as exc:
+            raise StatbotError(f"Could not reach Statbot API: {exc}") from exc
+
+        if not body.strip():
+            return []
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise StatbotError("Statbot API returned invalid JSON") from exc
+
+    def _api_url(self, path: str) -> str:
+        if self.base_url.endswith("/v1") and path.startswith("/v1/"):
+            return f"{self.base_url}{path.removeprefix('/v1')}"
+        return f"{self.base_url}{path}"
+
     def _build_headers(self, api_key: str) -> dict[str, str]:
         headers = {
-            "Accept": "application/json, text/event-stream",
+            "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": "discord-statbot-voice-report/1.0",
         }
@@ -94,26 +128,46 @@ class StatbotClient:
         return headers
 
     @staticmethod
-    def _build_voice_query(days: int) -> dict[str, Any]:
+    def _build_voice_top_params(
+        days: int,
+        *,
+        page: int,
+        page_size: int,
+    ) -> list[tuple[str, str]]:
         start = datetime.now(UTC) - timedelta(days=days)
         start = start.replace(hour=0, minute=0, second=0, microsecond=0)
         start_ms = int(start.timestamp() * 1000)
+        end_ms = int(datetime.now(UTC).timestamp() * 1000)
 
-        return {
-            "type": "query",
-            "start": start_ms,
-            "interval": "day",
-            "timezone_offset": 0,
-            "stats": ["voice"],
-            "voice_states": [
-                "normal",
-                "afk",
-                "self_deaf",
-                "self_mute",
-                "server_deaf",
-                "server_mute",
-            ],
-        }
+        return [
+            ("start", str(start_ms)),
+            ("end", str(end_ms)),
+            ("timezone_offset", "0"),
+            ("interval", "day"),
+            ("bot", "false"),
+            ("full", "true"),
+            ("order", "desc"),
+            ("page_size", str(page_size)),
+            ("page", str(page)),
+            ("voice_states[]", "normal"),
+            ("voice_states[]", "afk"),
+            ("voice_states[]", "self_mute"),
+            ("voice_states[]", "self_deaf"),
+            ("voice_states[]", "server_mute"),
+            ("voice_states[]", "server_deaf"),
+        ]
+
+    def _extract_members(self, payload: Any) -> list[Any]:
+        if isinstance(payload, list):
+            return payload
+        if not isinstance(payload, dict):
+            return []
+
+        for key in ("data", "results", "members", "items"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        return []
 
     def _parse_response(self, body: str, days: int) -> VoiceStats:
         stats = VoiceStats(days=days)
@@ -323,6 +377,8 @@ class StatbotClient:
                 raw,
                 "display_name",
                 "displayName",
+                "nick",
+                "globalName",
                 "name",
                 "username",
                 "label",
