@@ -29,7 +29,7 @@ def format_minutes(minutes: float) -> str:
 def build_voice_top_embed(stats: VoiceStats, *, limit: int = 10) -> discord.Embed:
     embed = discord.Embed(
         title="Топ по голосовой активности",
-        description=f"Период: последние {stats.days} дн.",
+        description=f"Период: {stats.display_period}.",
         color=BRAND_COLOR,
     )
 
@@ -62,12 +62,13 @@ def build_inactive_embed(
     inactive_members: list[discord.Member],
     active_count: int,
     total_checked: int,
+    period_label: str | None = None,
     limit: int = 25,
 ) -> discord.Embed:
     color = SUCCESS_COLOR if not inactive_members else WARNING_COLOR
     embed = discord.Embed(
         title="Участники без голосовой активности",
-        description=f"Период: последние {days} дн.",
+        description=f"Период: {period_label or f'последние {days} дн'}.",
         color=color,
     )
     embed.add_field(name="Проверено участников", value=str(total_checked), inline=True)
@@ -99,7 +100,7 @@ def build_report_embed(
 ) -> discord.Embed:
     embed = discord.Embed(
         title="Общий отчёт по голосовой активности",
-        description=f"Период: последние {stats.days} дн.",
+        description=f"Период: {stats.display_period}.",
         color=BRAND_COLOR,
     )
     embed.add_field(

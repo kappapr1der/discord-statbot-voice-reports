@@ -14,10 +14,15 @@ class VoiceMember:
 @dataclass(slots=True)
 class VoiceStats:
     days: int
+    period_label: str | None = None
     total_minutes: float = 0
     active_member_count: int = 0
     total_member_count: int = 0
     top_members: list[VoiceMember] = field(default_factory=list)
+
+    @property
+    def display_period(self) -> str:
+        return self.period_label or f"последние {self.days} дн"
 
     @property
     def has_activity(self) -> bool:

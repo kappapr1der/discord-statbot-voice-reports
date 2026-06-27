@@ -45,8 +45,16 @@ class StatbotClient:
     async def close(self) -> None:
         await self.session.close()
 
-    async def fetch_voice_stats(self, days: int) -> VoiceStats:
-        stats = VoiceStats(days=days)
+    async def fetch_voice_stats(
+        self,
+        days: int,
+        *,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        period_label: str | None = None,
+    ) -> VoiceStats:
+        start_at, end_at = self._resolve_period(days, start_at=start_at, end_at=end_at)
+        stats = VoiceStats(days=days, period_label=period_label)
         page = 1
         page_size = 100
 
@@ -54,7 +62,8 @@ class StatbotClient:
             payload = await self._request_json(
                 f"/v1/guilds/{self.guild_id}/voice/tops/members",
                 params=self._build_voice_top_params(
-                    days,
+                    start_at=start_at,
+                    end_at=end_at,
                     page=page,
                     page_size=page_size,
                 ),
@@ -128,16 +137,33 @@ class StatbotClient:
         return headers
 
     @staticmethod
-    def _build_voice_top_params(
+    def _resolve_period(
         days: int,
         *,
+        start_at: datetime | None,
+        end_at: datetime | None,
+    ) -> tuple[datetime, datetime]:
+        if start_at is None:
+            start_at = datetime.now(UTC) - timedelta(days=days)
+            start_at = start_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        if end_at is None:
+            end_at = datetime.now(UTC)
+        if start_at.tzinfo is None:
+            start_at = start_at.replace(tzinfo=UTC)
+        if end_at.tzinfo is None:
+            end_at = end_at.replace(tzinfo=UTC)
+        return start_at.astimezone(UTC), end_at.astimezone(UTC)
+
+    @staticmethod
+    def _build_voice_top_params(
+        *,
+        start_at: datetime,
+        end_at: datetime,
         page: int,
         page_size: int,
     ) -> list[tuple[str, str]]:
-        start = datetime.now(UTC) - timedelta(days=days)
-        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
-        start_ms = int(start.timestamp() * 1000)
-        end_ms = int(datetime.now(UTC).timestamp() * 1000)
+        start_ms = int(start_at.timestamp() * 1000)
+        end_ms = int(end_at.timestamp() * 1000)
 
         return [
             ("start", str(start_ms)),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import time
 
 from dotenv import load_dotenv
 
@@ -23,6 +24,55 @@ def _parse_int_env(name: str) -> int:
         return int(raw)
     except ValueError as exc:
         raise ConfigError(f"{name} must be an integer Discord snowflake") from exc
+
+
+def _parse_optional_int_env(name: str) -> int | None:
+    raw = os.getenv(name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer Discord snowflake") from exc
+
+
+def _parse_bool_env(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    normalized = raw.strip().casefold()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ConfigError(f"{name} must be a boolean value")
+
+
+def _parse_range_env(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer") from exc
+    if value < minimum or value > maximum:
+        raise ConfigError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def _parse_time_env(name: str, *, default: str) -> time:
+    raw = (os.getenv(name) or default).strip()
+    try:
+        hour_raw, minute_raw = raw.split(":", maxsplit=1)
+        hour = int(hour_raw)
+        minute = int(minute_raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must use HH:MM format") from exc
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        raise ConfigError(f"{name} must use HH:MM format")
+    return time(hour=hour, minute=minute)
 
 
 def _parse_role_ids(raw: str | None) -> set[int]:
@@ -52,10 +102,26 @@ class Settings:
     statbot_api_base_url: str
     statbot_auth_header: str
     statbot_request_timeout: float
+    report_channel_id: int | None
+    weekly_report_enabled: bool
+    weekly_report_days: int
+    weekly_report_weekday: int
+    weekly_report_time: time
+    weekly_report_timezone: str
 
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv()
+
+        report_channel_id = _parse_optional_int_env("REPORT_CHANNEL_ID")
+        weekly_report_enabled = _parse_bool_env(
+            "WEEKLY_REPORT_ENABLED",
+            default=report_channel_id is not None,
+        )
+        if weekly_report_enabled and report_channel_id is None:
+            raise ConfigError(
+                "REPORT_CHANNEL_ID is required when WEEKLY_REPORT_ENABLED is true"
+            )
 
         timeout_raw = os.getenv("STATBOT_REQUEST_TIMEOUT", "45")
         try:
@@ -73,4 +139,23 @@ class Settings:
             ).rstrip("/"),
             statbot_auth_header=os.getenv("STATBOT_AUTH_HEADER", "Authorization"),
             statbot_request_timeout=timeout,
+            report_channel_id=report_channel_id,
+            weekly_report_enabled=weekly_report_enabled,
+            weekly_report_days=_parse_range_env(
+                "WEEKLY_REPORT_DAYS",
+                default=7,
+                minimum=1,
+                maximum=365,
+            ),
+            weekly_report_weekday=_parse_range_env(
+                "WEEKLY_REPORT_WEEKDAY",
+                default=6,
+                minimum=0,
+                maximum=6,
+            ),
+            weekly_report_time=_parse_time_env("WEEKLY_REPORT_TIME", default="12:00"),
+            weekly_report_timezone=os.getenv(
+                "WEEKLY_REPORT_TIMEZONE",
+                "Europe/Moscow",
+            ).strip(),
         )
