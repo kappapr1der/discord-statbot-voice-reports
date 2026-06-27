@@ -69,7 +69,7 @@ class Settings:
             guild_id=_parse_int_env("GUILD_ID"),
             allowed_role_ids=_parse_role_ids(os.getenv("ALLOWED_ROLE_IDS")),
             statbot_api_base_url=os.getenv(
-                "STATBOT_API_BASE_URL", "https://proxy.statbot.net:443"
+                "STATBOT_API_BASE_URL", "https://api.statbot.net"
             ).rstrip("/"),
             statbot_auth_header=os.getenv("STATBOT_AUTH_HEADER", "Authorization"),
             statbot_request_timeout=timeout,
