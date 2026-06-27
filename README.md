@@ -6,8 +6,8 @@ Python-бот для Discord со slash-командами:
 - `/inactive days` - участники без голосовой активности за N дней.
 - `/report days` - общий отчёт.
 
-Данные берутся из Statbot API. По умолчанию используется маршрут дашборда Statbot:
-`https://proxy.statbot.net:443/guilds/{GUILD_ID}/voice`.
+Данные берутся из официального Statbot API. По умолчанию используется:
+`https://api.statbot.net/v1/guilds/{GUILD_ID}/voice/tops/members`.
 
 ## Требования
 
@@ -37,7 +37,7 @@ ALLOWED_ROLE_IDS=123456789012345678,987654321098765432
 Опционально:
 
 ```env
-STATBOT_API_BASE_URL=https://proxy.statbot.net:443
+STATBOT_API_BASE_URL=https://api.statbot.net
 STATBOT_AUTH_HEADER=Authorization
 STATBOT_REQUEST_TIMEOUT=45
 ```
