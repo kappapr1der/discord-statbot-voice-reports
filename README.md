@@ -2,9 +2,10 @@
 
 Python-бот для Discord со slash-командами:
 
-- `/voice_top days` - топ участников по времени в голосовых каналах за N дней.
-- `/inactive days` - участники без голосовой активности за N дней.
-- `/report days` - общий отчёт.
+- `/voice_top days start_date end_date` - топ участников по времени в голосовых каналах.
+- `/inactive days start_date end_date` - участники без голосовой активности.
+- `/report days start_date end_date` - общий отчёт.
+- `/test_report days start_date end_date channel` - отправляет тестовый отчёт в текстовый канал.
 
 Данные берутся из официального Statbot API. По умолчанию используется:
 `https://api.statbot.net/v1/guilds/{GUILD_ID}/voice/tops/members`.
@@ -32,6 +33,7 @@ DISCORD_TOKEN=your_discord_bot_token
 STATBOT_API_KEY=your_statbot_api_key
 GUILD_ID=123456789012345678
 ALLOWED_ROLE_IDS=123456789012345678,987654321098765432
+REPORT_CHANNEL_ID=123456789012345678
 ```
 
 Опционально:
@@ -40,6 +42,11 @@ ALLOWED_ROLE_IDS=123456789012345678,987654321098765432
 STATBOT_API_BASE_URL=https://api.statbot.net
 STATBOT_AUTH_HEADER=Authorization
 STATBOT_REQUEST_TIMEOUT=45
+WEEKLY_REPORT_ENABLED=true
+WEEKLY_REPORT_DAYS=7
+WEEKLY_REPORT_WEEKDAY=6
+WEEKLY_REPORT_TIME=12:00
+WEEKLY_REPORT_TIMEZONE=Europe/Moscow
 ```
 
 Если Statbot выдаёт ключ с другим заголовком, например `X-API-Key`, укажи:
@@ -67,6 +74,39 @@ python -m bot.main
 ```
 
 Команды синхронизируются только в сервер из `GUILD_ID`, поэтому появляются обычно сразу.
+
+## Периоды отчётов
+
+Если даты не указаны, команды смотрят последние `days` дней. По умолчанию `days` равен `7`.
+
+Конкретный день:
+
+```text
+/report start_date:2026-06-20
+```
+
+Диапазон дат:
+
+```text
+/voice_top start_date:2026-06-17 end_date:2026-06-23
+```
+
+`end_date` включается в отчёт. Формат дат: `YYYY-MM-DD`.
+
+## Уведомления в канал
+
+`REPORT_CHANNEL_ID` - ID текстового канала, куда бот будет отправлять автоматический отчёт.
+Чтобы скопировать ID канала, включи Developer Mode в Discord, нажми правой кнопкой на канал и выбери **Copy Channel ID**.
+
+Для проверки отправь slash-команду:
+
+```text
+/test_report days:7
+```
+
+Если указать параметр `channel`, тестовый отчёт уйдёт в выбранный канал. Если не указать, бот сначала попробует `REPORT_CHANNEL_ID`, потом текущий канал.
+
+Автоматический отчёт по умолчанию включается, когда задан `REPORT_CHANNEL_ID`, и отправляется каждое воскресенье в `12:00` по `Europe/Moscow`. В `WEEKLY_REPORT_WEEKDAY` используется формат Python: `0` - понедельник, `6` - воскресенье.
 
 ## Запуск через Docker
 
