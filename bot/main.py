@@ -13,6 +13,7 @@ from discord.ext import commands
 
 from .config import ConfigError, Settings
 from .embeds import (
+    build_active_embeds,
     build_error_embed,
     build_inactive_embed,
     build_report_embed,
@@ -59,6 +60,7 @@ class VoiceStatsBot(commands.Bot):
 
         guild = discord.Object(id=self.settings.guild_id)
         self.tree.add_command(voice_top, guild=guild)
+        self.tree.add_command(active, guild=guild)
         self.tree.add_command(inactive, guild=guild)
         self.tree.add_command(report, guild=guild)
         self.tree.add_command(test_report, guild=guild)
@@ -195,6 +197,14 @@ async def _send_error(interaction: discord.Interaction, message: str) -> None:
         await interaction.followup.send(embed=embed, ephemeral=True)
     else:
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def _send_embed_pages(
+    interaction: discord.Interaction,
+    embeds: list[discord.Embed],
+) -> None:
+    for index in range(0, len(embeds), 10):
+        await interaction.followup.send(embeds=embeds[index : index + 10])
 
 
 async def _fetch_guild_members(guild: discord.Guild | None) -> list[discord.Member]:
@@ -389,6 +399,51 @@ async def voice_top(
 
 
 @app_commands.command(
+    name="active",
+    description="Показывает всех участников с голосовой активностью.",
+)
+@app_commands.describe(
+    days="Период отчёта в днях, если даты не указаны",
+    start_date="Начало периода в формате YYYY-MM-DD",
+    end_date="Конец периода в формате YYYY-MM-DD включительно",
+)
+@_role_check()
+async def active(
+    interaction: discord.Interaction,
+    days: app_commands.Range[int, 1, 365] = 7,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> None:
+    await interaction.response.defer()
+    bot = _get_bot(interaction)
+    assert bot.statbot is not None
+
+    try:
+        period = _command_period(
+            bot,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        stats = await bot.statbot.fetch_voice_stats(
+            period.days,
+            start_at=period.start_at,
+            end_at=period.end_at,
+            period_label=period.label,
+        )
+        await _hydrate_top_member_names(bot, interaction.guild, stats)
+    except PeriodInputError as exc:
+        await _send_error(interaction, str(exc))
+        return
+    except StatbotError as exc:
+        LOGGER.exception("Statbot active request failed")
+        await _send_error(interaction, _statbot_error_message(exc))
+        return
+
+    await _send_embed_pages(interaction, build_active_embeds(stats))
+
+
+@app_commands.command(
     name="inactive",
     description="Показывает участников без голосовой активности.",
 )
@@ -557,6 +612,7 @@ async def test_report(
 
 
 @voice_top.error
+@active.error
 @inactive.error
 @report.error
 @test_report.error
