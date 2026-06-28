@@ -144,7 +144,14 @@ def _format_member_rows(members: list[VoiceMember]) -> str:
     rows = []
     for index, member in enumerate(members, start=1):
         rank = member.rank or index
+        display_name = _safe_display_name(member)
         rows.append(
-            f"**{rank}.** <@{member.user_id}> — {format_minutes(member.minutes)}"
+            f"**{rank}.** {display_name} — {format_minutes(member.minutes)}"
         )
     return "\n".join(rows)
+
+
+def _safe_display_name(member: VoiceMember) -> str:
+    display_name = member.display_name.strip() or f"Пользователь {member.user_id}"
+    display_name = discord.utils.escape_markdown(display_name)
+    return discord.utils.escape_mentions(display_name)

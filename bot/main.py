@@ -216,6 +216,35 @@ async def _inactive_members(
     return [member for member in members if member.id not in active_member_ids]
 
 
+async def _hydrate_top_member_names(
+    bot: VoiceStatsBot,
+    guild: discord.Guild | None,
+    stats,
+    *,
+    members: list[discord.Member] | None = None,
+) -> None:
+    members_by_id = {member.id: member for member in members or []}
+
+    for voice_member in stats.top_members:
+        member = members_by_id.get(voice_member.user_id)
+        if member is None and guild is not None:
+            member = guild.get_member(voice_member.user_id)
+        if member is None and guild is not None:
+            with suppress(discord.NotFound, discord.Forbidden, discord.HTTPException):
+                member = await guild.fetch_member(voice_member.user_id)
+
+        if member is not None:
+            voice_member.display_name = member.display_name
+            continue
+
+        user = bot.get_user(voice_member.user_id)
+        if user is None:
+            with suppress(discord.NotFound, discord.Forbidden, discord.HTTPException):
+                user = await bot.fetch_user(voice_member.user_id)
+        if user is not None:
+            voice_member.display_name = user.global_name or user.name
+
+
 def _rolling_period(days: int) -> ReportPeriod:
     return ReportPeriod(days=days, label=f"последние {days} дн")
 
@@ -282,6 +311,7 @@ async def build_guild_report_embed(
         period_label=period.label,
     )
     members = await _fetch_guild_members(guild)
+    await _hydrate_top_member_names(bot, guild, stats, members=members)
     inactive_list = [member for member in members if member.id not in stats.active_member_ids]
     embed = build_report_embed(
         stats=stats,
@@ -346,6 +376,7 @@ async def voice_top(
             end_at=period.end_at,
             period_label=period.label,
         )
+        await _hydrate_top_member_names(bot, interaction.guild, stats)
     except PeriodInputError as exc:
         await _send_error(interaction, str(exc))
         return
