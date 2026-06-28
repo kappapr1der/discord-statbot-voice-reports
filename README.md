@@ -3,6 +3,7 @@
 Python-бот для Discord со slash-командами:
 
 - `/voice_top days start_date end_date` - топ участников по времени в голосовых каналах.
+- `/active days start_date end_date` - все участники с голосовой активностью и их время.
 - `/inactive days start_date end_date` - участники без голосовой активности.
 - `/report days start_date end_date` - общий отчёт.
 - `/test_report days start_date end_date channel` - отправляет тестовый отчёт в текстовый канал.
@@ -92,6 +93,12 @@ python -m bot.main
 ```
 
 `end_date` включается в отчёт. Формат дат: `YYYY-MM-DD`.
+
+Чтобы посмотреть не топ, а всех активных за период:
+
+```text
+/active start_date:2026-06-27
+```
 
 ## Уведомления в канал
 

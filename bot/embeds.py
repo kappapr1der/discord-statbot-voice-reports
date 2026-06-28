@@ -56,6 +56,52 @@ def build_voice_top_embed(stats: VoiceStats, *, limit: int = 10) -> discord.Embe
     return embed
 
 
+def build_active_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[discord.Embed]:
+    members = stats.top_members
+    if not members:
+        embed = discord.Embed(
+            title="Активные участники в голосе",
+            description=(
+                f"Период: {stats.display_period}.\n\n"
+                "За этот период голосовой активности не найдено."
+            ),
+            color=WARNING_COLOR,
+        )
+        return [embed]
+
+    pages = [members[index : index + page_size] for index in range(0, len(members), page_size)]
+    embeds: list[discord.Embed] = []
+    for page_index, page_members in enumerate(pages, start=1):
+        title = "Активные участники в голосе"
+        if len(pages) > 1:
+            title = f"{title} · {page_index}/{len(pages)}"
+
+        embed = discord.Embed(
+            title=title,
+            description=f"Период: {stats.display_period}.",
+            color=BRAND_COLOR,
+        )
+        if page_index == 1:
+            embed.add_field(
+                name="Всего в голосе",
+                value=format_minutes(stats.total_minutes),
+                inline=True,
+            )
+            embed.add_field(
+                name="Активных участников",
+                value=str(stats.active_member_count or len(stats.active_member_ids)),
+                inline=True,
+            )
+        embed.add_field(
+            name="Кто был",
+            value=_format_member_rows(page_members),
+            inline=False,
+        )
+        embeds.append(embed)
+
+    return embeds
+
+
 def build_inactive_embed(
     *,
     days: int,
