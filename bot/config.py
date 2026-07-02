@@ -6,6 +6,16 @@ from datetime import time
 
 from dotenv import load_dotenv
 
+DEFAULT_ACTIVE_VOICE_STATES = (
+    "normal",
+    "self_mute",
+    "self_deaf",
+    "server_mute",
+    "server_deaf",
+)
+DEFAULT_AFK_VOICE_STATES = ("afk",)
+SUPPORTED_VOICE_STATS_SOURCES = {"statbot"}
+
 
 class ConfigError(RuntimeError):
     """Raised when the runtime configuration is incomplete or invalid."""
@@ -93,6 +103,51 @@ def _parse_role_ids(raw: str | None) -> set[int]:
     return role_ids
 
 
+def _parse_int_set_env(name: str) -> set[int]:
+    raw = os.getenv(name)
+    if not raw:
+        return set()
+
+    values: set[int] = set()
+    parts = raw.replace(";", ",").replace(" ", ",").split(",")
+    for part in (part.strip() for part in parts):
+        if not part:
+            continue
+        try:
+            values.add(int(part))
+        except ValueError as exc:
+            raise ConfigError(f"{name} must contain comma-separated Discord IDs") from exc
+    return values
+
+
+def _parse_csv_env(
+    name: str,
+    *,
+    default: tuple[str, ...],
+    allow_empty: bool = False,
+) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    values = tuple(
+        part.strip()
+        for part in raw.replace(";", ",").split(",")
+        if part.strip()
+    )
+    if not values and not allow_empty:
+        raise ConfigError(f"{name} must contain at least one value")
+    return values
+
+
+def _parse_voice_stats_source() -> str:
+    source = (os.getenv("VOICE_STATS_SOURCE") or "statbot").strip().casefold()
+    if source not in SUPPORTED_VOICE_STATS_SOURCES:
+        allowed = ", ".join(sorted(SUPPORTED_VOICE_STATS_SOURCES))
+        raise ConfigError(f"VOICE_STATS_SOURCE must be one of: {allowed}")
+    return source
+
+
 @dataclass(frozen=True)
 class Settings:
     discord_token: str
@@ -108,6 +163,12 @@ class Settings:
     weekly_report_weekday: int
     weekly_report_time: time
     weekly_report_timezone: str
+    voice_stats_source: str
+    statbot_active_voice_states: tuple[str, ...]
+    statbot_afk_voice_states: tuple[str, ...]
+    voice_session_tracking_enabled: bool
+    voice_activity_db_path: str
+    afk_channel_ids: set[int]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -158,4 +219,22 @@ class Settings:
                 "WEEKLY_REPORT_TIMEZONE",
                 "Europe/Moscow",
             ).strip(),
+            voice_stats_source=_parse_voice_stats_source(),
+            statbot_active_voice_states=_parse_csv_env(
+                "STATBOT_ACTIVE_VOICE_STATES",
+                default=DEFAULT_ACTIVE_VOICE_STATES,
+            ),
+            statbot_afk_voice_states=_parse_csv_env(
+                "STATBOT_AFK_VOICE_STATES",
+                default=DEFAULT_AFK_VOICE_STATES,
+                allow_empty=True,
+            ),
+            voice_session_tracking_enabled=_parse_bool_env(
+                "VOICE_SESSION_TRACKING_ENABLED",
+                default=False,
+            ),
+            voice_activity_db_path=(
+                os.getenv("VOICE_ACTIVITY_DB_PATH") or "data/voice_activity.sqlite3"
+            ).strip(),
+            afk_channel_ids=_parse_int_set_env("AFK_CHANNEL_IDS"),
         )

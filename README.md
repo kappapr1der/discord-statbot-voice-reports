@@ -4,12 +4,15 @@ Python-бот для Discord со slash-командами:
 
 - `/voice_top days start_date end_date` - топ участников по времени в голосовых каналах.
 - `/active days start_date end_date` - все участники с голосовой активностью и их время.
+- `/afk days start_date end_date` - участники и время в AFK отдельно от активности.
 - `/inactive days start_date end_date` - участники без голосовой активности.
 - `/report days start_date end_date` - общий отчёт.
 - `/test_report days start_date end_date channel` - отправляет тестовый отчёт в текстовый канал.
 
-Данные берутся из официального Statbot API. По умолчанию используется:
+Данные отчётов сейчас берутся из официального Statbot API. По умолчанию используется:
 `https://api.statbot.net/v1/guilds/{GUILD_ID}/voice/tops/members`.
+
+AFK исключён из обычной активности и считается отдельной выборкой.
 
 ## Требования
 
@@ -35,6 +38,7 @@ STATBOT_API_KEY=your_statbot_api_key
 GUILD_ID=123456789012345678
 ALLOWED_ROLE_IDS=123456789012345678,987654321098765432
 REPORT_CHANNEL_ID=123456789012345678
+VOICE_STATS_SOURCE=statbot
 ```
 
 Опционально:
@@ -43,11 +47,16 @@ REPORT_CHANNEL_ID=123456789012345678
 STATBOT_API_BASE_URL=https://api.statbot.net
 STATBOT_AUTH_HEADER=Authorization
 STATBOT_REQUEST_TIMEOUT=45
+STATBOT_ACTIVE_VOICE_STATES=normal,self_mute,self_deaf,server_mute,server_deaf
+STATBOT_AFK_VOICE_STATES=afk
 WEEKLY_REPORT_ENABLED=true
 WEEKLY_REPORT_DAYS=7
 WEEKLY_REPORT_WEEKDAY=6
 WEEKLY_REPORT_TIME=12:00
 WEEKLY_REPORT_TIMEZONE=Europe/Moscow
+VOICE_SESSION_TRACKING_ENABLED=true
+VOICE_ACTIVITY_DB_PATH=/data/voice_activity.sqlite3
+AFK_CHANNEL_IDS=123456789012345678
 ```
 
 Если Statbot выдаёт ключ с другим заголовком, например `X-API-Key`, укажи:
@@ -55,6 +64,11 @@ WEEKLY_REPORT_TIMEZONE=Europe/Moscow
 ```env
 STATBOT_AUTH_HEADER=X-API-Key
 ```
+
+`STATBOT_ACTIVE_VOICE_STATES` задаёт, какие Statbot voice states считаются активностью. По умолчанию `afk` туда не входит.
+`STATBOT_AFK_VOICE_STATES` задаёт отдельную AFK-выборку для `/afk` и блока AFK в `/report`.
+
+`AFK_CHANNEL_IDS` нужен для локального SQLite-сборщика. Если на сервере Discord задан системный AFK-канал, бот определит его автоматически; ID нужны только для дополнительных AFK-каналов.
 
 ## Запуск локально
 
@@ -100,6 +114,14 @@ python -m bot.main
 /active start_date:2026-06-27
 ```
 
+Чтобы посмотреть AFK отдельно:
+
+```text
+/afk start_date:2026-06-27
+```
+
+`/inactive` считает активностью только не-AFK время. Если участник за период сидел только в AFK, он попадёт в неактивных.
+
 ## Уведомления в канал
 
 `REPORT_CHANNEL_ID` - ID текстового канала, куда бот будет отправлять автоматический отчёт.
@@ -115,12 +137,29 @@ python -m bot.main
 
 Автоматический отчёт по умолчанию включается, когда задан `REPORT_CHANNEL_ID`, и отправляется каждое воскресенье в `12:00` по `Europe/Moscow`. В `WEEKLY_REPORT_WEEKDAY` используется формат Python: `0` - понедельник, `6` - воскресенье.
 
+В еженедельном отчёте активное время показывается без AFK, а AFK выводится отдельным блоком.
+
+## Подготовка к своему сбору данных
+
+Бот уже умеет параллельно вести локальный журнал голосовых сессий в SQLite. Это нужно для будущего перехода с Statbot API на собственный источник данных.
+
+Включить сбор:
+
+```env
+VOICE_SESSION_TRACKING_ENABLED=true
+VOICE_ACTIVITY_DB_PATH=/data/voice_activity.sqlite3
+```
+
+В SQLite пишутся сессии с состоянием `active` или `afk`, каналом, участником, временем начала/конца и длительностью. Текущие slash-команды пока читают отчёты из Statbot, чтобы не потерять исторические данные. После накопления своей истории можно будет переключить отчёты на локальную базу.
+
 ## Запуск через Docker
 
 ```bash
 docker compose up -d --build
 docker compose logs -f
 ```
+
+Compose монтирует `./data` в контейнер как `/data`, чтобы SQLite-база переживала пересборку контейнера.
 
 Остановить:
 

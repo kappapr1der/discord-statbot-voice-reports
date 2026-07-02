@@ -9,6 +9,15 @@ import aiohttp
 
 from .models import VoiceMember, VoiceStats
 
+DEFAULT_VOICE_STATES = (
+    "normal",
+    "afk",
+    "self_mute",
+    "self_deaf",
+    "server_mute",
+    "server_deaf",
+)
+
 
 class StatbotError(RuntimeError):
     """Base class for Statbot API failures."""
@@ -52,9 +61,14 @@ class StatbotClient:
         start_at: datetime | None = None,
         end_at: datetime | None = None,
         period_label: str | None = None,
+        voice_states: Iterable[str] = DEFAULT_VOICE_STATES,
     ) -> VoiceStats:
         start_at, end_at = self._resolve_period(days, start_at=start_at, end_at=end_at)
         stats = VoiceStats(days=days, period_label=period_label)
+        voice_state_values = tuple(state for state in voice_states if state)
+        if not voice_state_values:
+            return stats
+
         page = 1
         page_size = 100
 
@@ -66,6 +80,7 @@ class StatbotClient:
                     end_at=end_at,
                     page=page,
                     page_size=page_size,
+                    voice_states=voice_state_values,
                 ),
             )
             members = self._extract_members(payload)
@@ -161,11 +176,12 @@ class StatbotClient:
         end_at: datetime,
         page: int,
         page_size: int,
+        voice_states: Iterable[str],
     ) -> list[tuple[str, str]]:
         start_ms = int(start_at.timestamp() * 1000)
         end_ms = int(end_at.timestamp() * 1000)
 
-        return [
+        params = [
             ("start", str(start_ms)),
             ("end", str(end_ms)),
             ("timezone_offset", "0"),
@@ -175,13 +191,9 @@ class StatbotClient:
             ("order", "desc"),
             ("page_size", str(page_size)),
             ("page", str(page)),
-            ("voice_states[]", "normal"),
-            ("voice_states[]", "afk"),
-            ("voice_states[]", "self_mute"),
-            ("voice_states[]", "self_deaf"),
-            ("voice_states[]", "server_mute"),
-            ("voice_states[]", "server_deaf"),
         ]
+        params.extend(("voice_states[]", state) for state in voice_states)
+        return params
 
     def _extract_members(self, payload: Any) -> list[Any]:
         if isinstance(payload, list):
