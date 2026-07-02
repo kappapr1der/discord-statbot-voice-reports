@@ -4,11 +4,15 @@
 
 ## Что уже подготовлено
 
-- `VOICE_STATS_SOURCE=statbot` оставляет текущие отчёты на Statbot.
+- `VOICE_STATS_SOURCE=statbot` оставляет отчёты на Statbot.
+- `VOICE_STATS_SOURCE=local` читает отчёты только из SQLite.
+- `VOICE_STATS_SOURCE=auto` сначала пробует Statbot, а при ошибках использует SQLite.
 - `STATBOT_ACTIVE_VOICE_STATES` исключает `afk` из активности.
 - `STATBOT_AFK_VOICE_STATES=afk` даёт отдельную AFK-выборку для `/afk` и `/report`.
 - `VOICE_SESSION_TRACKING_ENABLED=true` включает локальный SQLite-журнал.
 - `AFK_CHANNEL_IDS` позволяет пометить дополнительные AFK-каналы; системный Discord AFK-канал определяется автоматически.
+- `STATBOT_FALLBACK_FAILURE_THRESHOLD` задаёт, после скольких ошибок Statbot подряд отправлять алерт о переходе на локальную базу.
+- `STATBOT_RECOVERY_CHECK_SECONDS` задаёт, как часто в fallback-режиме проверять восстановление Statbot.
 
 ## Как копится локальная история
 
@@ -24,8 +28,8 @@
 
 ## План переключения
 
-1. Включить локальный сбор на VPS и дать ему поработать 2-4 недели параллельно со Statbot.
-2. Добавить локальный `VoiceStatsProvider`, который считает `/voice_top`, `/active`, `/inactive`, `/report` и `/afk` из SQLite.
+1. Держать `VOICE_STATS_SOURCE=auto`, чтобы Statbot оставался основным источником, а SQLite был резервом.
+2. Дать локальному сбору поработать 2-4 недели параллельно со Statbot.
 3. Сравнить отчёты Statbot и SQLite на одинаковых периодах.
-4. После проверки переключить `VOICE_STATS_SOURCE=local`.
-5. Оставить Statbot как fallback ещё на один расчётный период.
+4. После проверки можно переключить `VOICE_STATS_SOURCE=local`.
+5. Statbot можно оставить как ручной fallback через возврат к `VOICE_STATS_SOURCE=auto`.

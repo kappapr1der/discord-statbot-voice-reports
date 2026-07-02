@@ -20,7 +20,12 @@ from .embeds import (
     build_report_embed,
     build_voice_top_embed,
 )
-from .providers import StatbotVoiceStatsProvider, VoiceStatsProvider
+from .providers import (
+    AutoVoiceStatsProvider,
+    LocalVoiceStatsProvider,
+    StatbotVoiceStatsProvider,
+    VoiceStatsProvider,
+)
 from .statbot_client import (
     StatbotClient,
     StatbotEmptyDataError,
@@ -60,25 +65,69 @@ class VoiceStatsBot(commands.Bot):
         self.weekly_report_task: asyncio.Task[None] | None = None
 
     async def setup_hook(self) -> None:
-        statbot_client = StatbotClient(
-            api_key=self.settings.statbot_api_key,
-            guild_id=self.settings.guild_id,
-            base_url=self.settings.statbot_api_base_url,
-            auth_header=self.settings.statbot_auth_header,
-            timeout=self.settings.statbot_request_timeout,
-        )
-        self.voice_stats = StatbotVoiceStatsProvider(
-            client=statbot_client,
-            active_voice_states=self.settings.statbot_active_voice_states,
-            afk_voice_states=self.settings.statbot_afk_voice_states,
-        )
+        statbot_provider = None
+        if self.settings.voice_stats_source in {"statbot", "auto"}:
+            statbot_provider = StatbotVoiceStatsProvider(
+                client=StatbotClient(
+                    api_key=self.settings.statbot_api_key,
+                    guild_id=self.settings.guild_id,
+                    base_url=self.settings.statbot_api_base_url,
+                    auth_header=self.settings.statbot_auth_header,
+                    timeout=self.settings.statbot_request_timeout,
+                ),
+                active_voice_states=self.settings.statbot_active_voice_states,
+                afk_voice_states=self.settings.statbot_afk_voice_states,
+            )
 
-        if self.settings.voice_session_tracking_enabled:
+        needs_local_stats = self.settings.voice_stats_source in {"local", "auto"}
+        if self.settings.voice_session_tracking_enabled or needs_local_stats:
+            if needs_local_stats and not self.settings.voice_session_tracking_enabled:
+                LOGGER.info(
+                    "Enabling voice session tracking because VOICE_STATS_SOURCE=%s",
+                    self.settings.voice_stats_source,
+                )
             self.voice_sessions = VoiceSessionStore(
                 db_path=self.settings.voice_activity_db_path,
                 afk_channel_ids=self.settings.afk_channel_ids,
             )
             await self.voice_sessions.start()
+
+        local_provider = None
+        if self.voice_sessions is not None:
+            local_provider = LocalVoiceStatsProvider(
+                store=self.voice_sessions,
+                guild_id=self.settings.guild_id,
+            )
+
+        if self.settings.voice_stats_source == "statbot":
+            if statbot_provider is None:
+                raise ConfigError("Statbot voice stats provider is not available")
+            self.voice_stats = statbot_provider
+        elif self.settings.voice_stats_source == "local":
+            if local_provider is None:
+                raise ConfigError("Local voice stats provider is not available")
+            self.voice_stats = local_provider
+        else:
+            if statbot_provider is None:
+                raise ConfigError("Auto voice stats provider requires Statbot")
+            if local_provider is None:
+                raise ConfigError("Auto voice stats provider requires local tracking")
+            self.voice_stats = AutoVoiceStatsProvider(
+                statbot=statbot_provider,
+                local=local_provider,
+                failure_threshold=self.settings.statbot_fallback_failure_threshold,
+                recovery_check_seconds=self.settings.statbot_recovery_check_seconds,
+                on_degraded=(
+                    self.send_voice_stats_source_alert
+                    if self.settings.statbot_fallback_alerts_enabled
+                    else None
+                ),
+                on_recovered=(
+                    self.send_voice_stats_source_alert
+                    if self.settings.statbot_fallback_alerts_enabled
+                    else None
+                ),
+            )
 
         guild = discord.Object(id=self.settings.guild_id)
         self.tree.add_command(voice_top, guild=guild)
@@ -203,6 +252,22 @@ class VoiceStatsBot(commands.Bot):
 
         LOGGER.warning("REPORT_CHANNEL_ID=%s is not a text channel", channel_id)
         return None
+
+    async def send_voice_stats_source_alert(self, message: str) -> None:
+        channel = await self.resolve_report_channel()
+        if channel is None:
+            LOGGER.warning("Voice stats source alert skipped: no report channel")
+            return
+
+        embed = discord.Embed(
+            title="Источник голосовых отчётов",
+            description=message,
+            color=discord.Color.orange(),
+        )
+        try:
+            await channel.send(embed=embed)
+        except discord.HTTPException:
+            LOGGER.exception("Could not send voice stats source alert")
 
 
 def _get_bot(interaction: discord.Interaction) -> VoiceStatsBot:
@@ -586,6 +651,7 @@ async def inactive(
         active_count=len(active_ids),
         total_checked=len(members),
         period_label=period.label,
+        source_label=stats.source_label,
     )
     await interaction.followup.send(embed=embed)
 

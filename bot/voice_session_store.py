@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import logging
 from pathlib import Path
 import sqlite3
 
 import discord
+
+from .models import VoiceMember, VoiceStats
 
 
 LOGGER = logging.getLogger(__name__)
@@ -80,6 +82,74 @@ class VoiceSessionStore:
             "Voice session tracker reconciled %s current voice sessions for guild %s",
             len(presences),
             guild.id,
+        )
+
+    async def fetch_stats(
+        self,
+        *,
+        guild_id: int,
+        state: str,
+        days: int,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        period_label: str | None = None,
+        source_label: str | None = None,
+    ) -> VoiceStats:
+        start_at, end_at = _resolve_period(days, start_at=start_at, end_at=end_at)
+        now = _utc_now()
+
+        async with self._lock:
+            rows = self._conn().execute(
+                """
+                SELECT user_id, started_at, ended_at
+                FROM voice_sessions
+                WHERE guild_id = ?
+                  AND state = ?
+                  AND started_at < ?
+                  AND COALESCE(ended_at, ?) > ?
+                """,
+                (
+                    guild_id,
+                    state,
+                    _format_time(end_at),
+                    _format_time(now),
+                    _format_time(start_at),
+                ),
+            ).fetchall()
+
+        minutes_by_user: dict[int, float] = {}
+        for row in rows:
+            session_start = _parse_time(row["started_at"])
+            raw_end = row["ended_at"]
+            session_end = _parse_time(raw_end) if raw_end else now
+            overlap_start = max(session_start, start_at)
+            overlap_end = min(session_end, end_at, now)
+            duration_seconds = max(0, int((overlap_end - overlap_start).total_seconds()))
+            if duration_seconds <= 0:
+                continue
+            user_id = int(row["user_id"])
+            minutes_by_user[user_id] = minutes_by_user.get(user_id, 0) + duration_seconds / 60
+
+        members = [
+            VoiceMember(
+                user_id=user_id,
+                display_name=f"User {user_id}",
+                minutes=minutes,
+                rank=index,
+            )
+            for index, (user_id, minutes) in enumerate(
+                sorted(minutes_by_user.items(), key=lambda item: item[1], reverse=True),
+                start=1,
+            )
+        ]
+
+        return VoiceStats(
+            days=days,
+            period_label=period_label,
+            source_label=source_label,
+            total_minutes=sum(minutes_by_user.values()),
+            active_member_count=len(members),
+            top_members=members,
         )
 
     def _presence_from_channel(
@@ -259,3 +329,21 @@ def _parse_time(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _resolve_period(
+    days: int,
+    *,
+    start_at: datetime | None,
+    end_at: datetime | None,
+) -> tuple[datetime, datetime]:
+    if start_at is None:
+        start_at = _utc_now() - timedelta(days=days)
+        start_at = start_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    if end_at is None:
+        end_at = _utc_now()
+    if start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=UTC)
+    if end_at.tzinfo is None:
+        end_at = end_at.replace(tzinfo=UTC)
+    return start_at.astimezone(UTC), end_at.astimezone(UTC)
