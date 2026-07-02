@@ -13,13 +13,21 @@ from discord.ext import commands
 
 from .config import ConfigError, Settings
 from .embeds import (
+    build_afk_embeds,
     build_active_embeds,
     build_error_embed,
     build_inactive_embed,
     build_report_embed,
     build_voice_top_embed,
 )
-from .statbot_client import StatbotClient, StatbotEmptyDataError, StatbotError, StatbotHTTPError
+from .providers import StatbotVoiceStatsProvider, VoiceStatsProvider
+from .statbot_client import (
+    StatbotClient,
+    StatbotEmptyDataError,
+    StatbotError,
+    StatbotHTTPError,
+)
+from .voice_session_store import VoiceSessionStore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -43,24 +51,39 @@ class VoiceStatsBot(commands.Bot):
         intents = discord.Intents.default()
         intents.guilds = True
         intents.members = True
+        intents.voice_states = True
 
         super().__init__(command_prefix="!", intents=intents)
         self.settings = settings
-        self.statbot: StatbotClient | None = None
+        self.voice_stats: VoiceStatsProvider | None = None
+        self.voice_sessions: VoiceSessionStore | None = None
         self.weekly_report_task: asyncio.Task[None] | None = None
 
     async def setup_hook(self) -> None:
-        self.statbot = StatbotClient(
+        statbot_client = StatbotClient(
             api_key=self.settings.statbot_api_key,
             guild_id=self.settings.guild_id,
             base_url=self.settings.statbot_api_base_url,
             auth_header=self.settings.statbot_auth_header,
             timeout=self.settings.statbot_request_timeout,
         )
+        self.voice_stats = StatbotVoiceStatsProvider(
+            client=statbot_client,
+            active_voice_states=self.settings.statbot_active_voice_states,
+            afk_voice_states=self.settings.statbot_afk_voice_states,
+        )
+
+        if self.settings.voice_session_tracking_enabled:
+            self.voice_sessions = VoiceSessionStore(
+                db_path=self.settings.voice_activity_db_path,
+                afk_channel_ids=self.settings.afk_channel_ids,
+            )
+            await self.voice_sessions.start()
 
         guild = discord.Object(id=self.settings.guild_id)
         self.tree.add_command(voice_top, guild=guild)
         self.tree.add_command(active, guild=guild)
+        self.tree.add_command(afk, guild=guild)
         self.tree.add_command(inactive, guild=guild)
         self.tree.add_command(report, guild=guild)
         self.tree.add_command(test_report, guild=guild)
@@ -74,12 +97,33 @@ class VoiceStatsBot(commands.Bot):
             self.weekly_report_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.weekly_report_task
-        if self.statbot:
-            await self.statbot.close()
+        if self.voice_stats:
+            await self.voice_stats.close()
+        if self.voice_sessions:
+            await self.voice_sessions.close()
         await super().close()
 
     async def on_ready(self) -> None:
         LOGGER.info("Logged in as %s (ID: %s)", self.user, self.user.id if self.user else "?")
+        if self.voice_sessions is None:
+            return
+
+        guild = self.get_guild(self.settings.guild_id)
+        if guild is None:
+            with suppress(discord.HTTPException):
+                guild = await self.fetch_guild(self.settings.guild_id)
+        if isinstance(guild, discord.Guild):
+            await self.voice_sessions.reconcile_guild(guild)
+
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ) -> None:
+        if self.voice_sessions is None:
+            return
+        await self.voice_sessions.handle_voice_update(member, before.channel, after.channel)
 
     async def _weekly_report_loop(self) -> None:
         await self.wait_until_ready()
@@ -304,6 +348,30 @@ def _command_period(
     )
 
 
+def _voice_stats_provider(bot: VoiceStatsBot) -> VoiceStatsProvider:
+    if bot.voice_stats is None:
+        raise RuntimeError("Voice stats provider is not initialized")
+    return bot.voice_stats
+
+
+async def _fetch_activity_stats(bot: VoiceStatsBot, period: ReportPeriod):
+    return await _voice_stats_provider(bot).fetch_activity_stats(
+        period.days,
+        start_at=period.start_at,
+        end_at=period.end_at,
+        period_label=period.label,
+    )
+
+
+async def _fetch_afk_stats(bot: VoiceStatsBot, period: ReportPeriod):
+    return await _voice_stats_provider(bot).fetch_afk_stats(
+        period.days,
+        start_at=period.start_at,
+        end_at=period.end_at,
+        period_label=period.label,
+    )
+
+
 async def build_guild_report_embed(
     bot: VoiceStatsBot,
     guild: discord.Guild | None,
@@ -312,19 +380,17 @@ async def build_guild_report_embed(
     title: str | None = None,
     top_limit: int = 5,
 ) -> discord.Embed:
-    assert bot.statbot is not None
-
-    stats = await bot.statbot.fetch_voice_stats(
-        period.days,
-        start_at=period.start_at,
-        end_at=period.end_at,
-        period_label=period.label,
+    stats, afk_stats = await asyncio.gather(
+        _fetch_activity_stats(bot, period),
+        _fetch_afk_stats(bot, period),
     )
     members = await _fetch_guild_members(guild)
     await _hydrate_top_member_names(bot, guild, stats, members=members)
+    await _hydrate_top_member_names(bot, guild, afk_stats, members=members)
     inactive_list = [member for member in members if member.id not in stats.active_member_ids]
     embed = build_report_embed(
         stats=stats,
+        afk_stats=afk_stats,
         inactive_members=inactive_list,
         total_checked=len(members),
         top_limit=top_limit,
@@ -371,7 +437,6 @@ async def voice_top(
 ) -> None:
     await interaction.response.defer()
     bot = _get_bot(interaction)
-    assert bot.statbot is not None
 
     try:
         period = _command_period(
@@ -380,12 +445,7 @@ async def voice_top(
             start_date=start_date,
             end_date=end_date,
         )
-        stats = await bot.statbot.fetch_voice_stats(
-            period.days,
-            start_at=period.start_at,
-            end_at=period.end_at,
-            period_label=period.label,
-        )
+        stats = await _fetch_activity_stats(bot, period)
         await _hydrate_top_member_names(bot, interaction.guild, stats)
     except PeriodInputError as exc:
         await _send_error(interaction, str(exc))
@@ -416,7 +476,6 @@ async def active(
 ) -> None:
     await interaction.response.defer()
     bot = _get_bot(interaction)
-    assert bot.statbot is not None
 
     try:
         period = _command_period(
@@ -425,12 +484,7 @@ async def active(
             start_date=start_date,
             end_date=end_date,
         )
-        stats = await bot.statbot.fetch_voice_stats(
-            period.days,
-            start_at=period.start_at,
-            end_at=period.end_at,
-            period_label=period.label,
-        )
+        stats = await _fetch_activity_stats(bot, period)
         await _hydrate_top_member_names(bot, interaction.guild, stats)
     except PeriodInputError as exc:
         await _send_error(interaction, str(exc))
@@ -441,6 +495,45 @@ async def active(
         return
 
     await _send_embed_pages(interaction, build_active_embeds(stats))
+
+
+@app_commands.command(
+    name="afk",
+    description="Показывает AFK-время отдельно от голосовой активности.",
+)
+@app_commands.describe(
+    days="Период отчёта в днях, если даты не указаны",
+    start_date="Начало периода в формате YYYY-MM-DD",
+    end_date="Конец периода в формате YYYY-MM-DD включительно",
+)
+@_role_check()
+async def afk(
+    interaction: discord.Interaction,
+    days: app_commands.Range[int, 1, 365] = 7,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> None:
+    await interaction.response.defer()
+    bot = _get_bot(interaction)
+
+    try:
+        period = _command_period(
+            bot,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        stats = await _fetch_afk_stats(bot, period)
+        await _hydrate_top_member_names(bot, interaction.guild, stats)
+    except PeriodInputError as exc:
+        await _send_error(interaction, str(exc))
+        return
+    except StatbotError as exc:
+        LOGGER.exception("Statbot afk request failed")
+        await _send_error(interaction, _statbot_error_message(exc))
+        return
+
+    await _send_embed_pages(interaction, build_afk_embeds(stats))
 
 
 @app_commands.command(
@@ -461,7 +554,6 @@ async def inactive(
 ) -> None:
     await interaction.response.defer()
     bot = _get_bot(interaction)
-    assert bot.statbot is not None
 
     try:
         period = _command_period(
@@ -470,12 +562,7 @@ async def inactive(
             start_date=start_date,
             end_date=end_date,
         )
-        stats = await bot.statbot.fetch_voice_stats(
-            period.days,
-            start_at=period.start_at,
-            end_at=period.end_at,
-            period_label=period.label,
-        )
+        stats = await _fetch_activity_stats(bot, period)
         members = await _fetch_guild_members(interaction.guild)
     except PeriodInputError as exc:
         await _send_error(interaction, str(exc))
@@ -613,6 +700,7 @@ async def test_report(
 
 @voice_top.error
 @active.error
+@afk.error
 @inactive.error
 @report.error
 @test_report.error

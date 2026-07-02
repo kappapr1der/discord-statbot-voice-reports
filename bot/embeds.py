@@ -32,6 +32,7 @@ def build_voice_top_embed(stats: VoiceStats, *, limit: int = 10) -> discord.Embe
         description=f"Период: {stats.display_period}.",
         color=BRAND_COLOR,
     )
+    _set_afk_footer(embed)
 
     members = stats.top_members[:limit]
     if not members:
@@ -67,6 +68,7 @@ def build_active_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[disco
             ),
             color=WARNING_COLOR,
         )
+        _set_afk_footer(embed)
         return [embed]
 
     pages = [members[index : index + page_size] for index in range(0, len(members), page_size)]
@@ -81,6 +83,7 @@ def build_active_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[disco
             description=f"Период: {stats.display_period}.",
             color=BRAND_COLOR,
         )
+        _set_afk_footer(embed)
         if page_index == 1:
             embed.add_field(
                 name="Всего в голосе",
@@ -94,6 +97,52 @@ def build_active_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[disco
             )
         embed.add_field(
             name="Кто был",
+            value=_format_member_rows(page_members),
+            inline=False,
+        )
+        embeds.append(embed)
+
+    return embeds
+
+
+def build_afk_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[discord.Embed]:
+    members = stats.top_members
+    if not members:
+        embed = discord.Embed(
+            title="AFK отдельно",
+            description=(
+                f"Период: {stats.display_period}.\n\n"
+                "За этот период AFK-времени не найдено."
+            ),
+            color=SUCCESS_COLOR,
+        )
+        return [embed]
+
+    pages = [members[index : index + page_size] for index in range(0, len(members), page_size)]
+    embeds: list[discord.Embed] = []
+    for page_index, page_members in enumerate(pages, start=1):
+        title = "AFK отдельно"
+        if len(pages) > 1:
+            title = f"{title} · {page_index}/{len(pages)}"
+
+        embed = discord.Embed(
+            title=title,
+            description=f"Период: {stats.display_period}.",
+            color=WARNING_COLOR,
+        )
+        if page_index == 1:
+            embed.add_field(
+                name="Всего AFK",
+                value=format_minutes(stats.total_minutes),
+                inline=True,
+            )
+            embed.add_field(
+                name="Участников в AFK",
+                value=str(stats.active_member_count or len(stats.active_member_ids)),
+                inline=True,
+            )
+        embed.add_field(
+            name="Кто был в AFK",
             value=_format_member_rows(page_members),
             inline=False,
         )
@@ -117,6 +166,7 @@ def build_inactive_embed(
         description=f"Период: {period_label or f'последние {days} дн'}.",
         color=color,
     )
+    _set_afk_footer(embed)
     embed.add_field(name="Проверено участников", value=str(total_checked), inline=True)
     embed.add_field(name="Активных", value=str(active_count), inline=True)
     embed.add_field(name="Неактивных", value=str(len(inactive_members)), inline=True)
@@ -140,6 +190,7 @@ def build_inactive_embed(
 def build_report_embed(
     *,
     stats: VoiceStats,
+    afk_stats: VoiceStats | None,
     inactive_members: list[discord.Member],
     total_checked: int,
     top_limit: int = 5,
@@ -149,8 +200,9 @@ def build_report_embed(
         description=f"Период: {stats.display_period}.",
         color=BRAND_COLOR,
     )
+    _set_afk_footer(embed)
     embed.add_field(
-        name="Всего времени",
+        name="Активного времени",
         value=format_minutes(stats.total_minutes),
         inline=True,
     )
@@ -162,6 +214,14 @@ def build_report_embed(
     embed.add_field(name="Неактивных", value=str(len(inactive_members)), inline=True)
     embed.add_field(name="Проверено участников", value=str(total_checked), inline=True)
 
+    if afk_stats is not None:
+        afk_count = afk_stats.active_member_count or len(afk_stats.active_member_ids)
+        embed.add_field(
+            name="AFK отдельно",
+            value=f"{format_minutes(afk_stats.total_minutes)} · {afk_count} чел.",
+            inline=True,
+        )
+
     if stats.top_members:
         embed.add_field(
             name=f"Топ {min(top_limit, len(stats.top_members))}",
@@ -172,6 +232,13 @@ def build_report_embed(
         embed.add_field(
             name="Топ",
             value="За этот период голосовой активности не найдено.",
+            inline=False,
+        )
+
+    if afk_stats is not None and afk_stats.top_members:
+        embed.add_field(
+            name=f"AFK топ {min(top_limit, len(afk_stats.top_members))}",
+            value=_format_member_rows(afk_stats.top_members[:top_limit]),
             inline=False,
         )
 
@@ -201,3 +268,7 @@ def _safe_display_name(member: VoiceMember) -> str:
     display_name = member.display_name.strip() or f"Пользователь {member.user_id}"
     display_name = discord.utils.escape_markdown(display_name)
     return discord.utils.escape_mentions(display_name)
+
+
+def _set_afk_footer(embed: discord.Embed) -> None:
+    embed.set_footer(text="AFK исключён из активности и считается отдельно.")
