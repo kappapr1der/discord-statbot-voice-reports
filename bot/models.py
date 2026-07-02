@@ -15,6 +15,7 @@ class VoiceMember:
 class VoiceStats:
     days: int
     period_label: str | None = None
+    source_label: str | None = None
     total_minutes: float = 0
     active_member_count: int = 0
     total_member_count: int = 0

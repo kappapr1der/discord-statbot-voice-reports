@@ -32,7 +32,7 @@ def build_voice_top_embed(stats: VoiceStats, *, limit: int = 10) -> discord.Embe
         description=f"Период: {stats.display_period}.",
         color=BRAND_COLOR,
     )
-    _set_afk_footer(embed)
+    _set_afk_footer(embed, stats=stats)
 
     members = stats.top_members[:limit]
     if not members:
@@ -68,7 +68,7 @@ def build_active_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[disco
             ),
             color=WARNING_COLOR,
         )
-        _set_afk_footer(embed)
+        _set_afk_footer(embed, stats=stats)
         return [embed]
 
     pages = [members[index : index + page_size] for index in range(0, len(members), page_size)]
@@ -83,7 +83,7 @@ def build_active_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[disco
             description=f"Период: {stats.display_period}.",
             color=BRAND_COLOR,
         )
-        _set_afk_footer(embed)
+        _set_afk_footer(embed, stats=stats)
         if page_index == 1:
             embed.add_field(
                 name="Всего в голосе",
@@ -116,6 +116,7 @@ def build_afk_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[discord.
             ),
             color=SUCCESS_COLOR,
         )
+        _set_afk_footer(embed, stats=stats)
         return [embed]
 
     pages = [members[index : index + page_size] for index in range(0, len(members), page_size)]
@@ -130,6 +131,7 @@ def build_afk_embeds(stats: VoiceStats, *, page_size: int = 20) -> list[discord.
             description=f"Период: {stats.display_period}.",
             color=WARNING_COLOR,
         )
+        _set_afk_footer(embed, stats=stats)
         if page_index == 1:
             embed.add_field(
                 name="Всего AFK",
@@ -158,6 +160,7 @@ def build_inactive_embed(
     active_count: int,
     total_checked: int,
     period_label: str | None = None,
+    source_label: str | None = None,
     limit: int = 25,
 ) -> discord.Embed:
     color = SUCCESS_COLOR if not inactive_members else WARNING_COLOR
@@ -166,7 +169,7 @@ def build_inactive_embed(
         description=f"Период: {period_label or f'последние {days} дн'}.",
         color=color,
     )
-    _set_afk_footer(embed)
+    _set_afk_footer(embed, source_label=source_label)
     embed.add_field(name="Проверено участников", value=str(total_checked), inline=True)
     embed.add_field(name="Активных", value=str(active_count), inline=True)
     embed.add_field(name="Неактивных", value=str(len(inactive_members)), inline=True)
@@ -200,7 +203,7 @@ def build_report_embed(
         description=f"Период: {stats.display_period}.",
         color=BRAND_COLOR,
     )
-    _set_afk_footer(embed)
+    _set_afk_footer(embed, stats=stats)
     embed.add_field(
         name="Активного времени",
         value=format_minutes(stats.total_minutes),
@@ -270,5 +273,14 @@ def _safe_display_name(member: VoiceMember) -> str:
     return discord.utils.escape_mentions(display_name)
 
 
-def _set_afk_footer(embed: discord.Embed) -> None:
-    embed.set_footer(text="AFK исключён из активности и считается отдельно.")
+def _set_afk_footer(
+    embed: discord.Embed,
+    *,
+    stats: VoiceStats | None = None,
+    source_label: str | None = None,
+) -> None:
+    source = source_label or (stats.source_label if stats is not None else None)
+    parts = ["AFK исключён из активности и считается отдельно."]
+    if source:
+        parts.append(f"Источник: {source}")
+    embed.set_footer(text=" · ".join(parts))

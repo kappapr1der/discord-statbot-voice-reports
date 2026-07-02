@@ -9,8 +9,10 @@ Python-бот для Discord со slash-командами:
 - `/report days start_date end_date` - общий отчёт.
 - `/test_report days start_date end_date channel` - отправляет тестовый отчёт в текстовый канал.
 
-Данные отчётов сейчас берутся из официального Statbot API. По умолчанию используется:
+Данные отчётов в режиме `auto` сначала берутся из официального Statbot API. По умолчанию используется:
 `https://api.statbot.net/v1/guilds/{GUILD_ID}/voice/tops/members`.
+
+Если Statbot API начинает фейлиться, бот временно переключает отчёты на локальную SQLite-базу и отправляет уведомление в `REPORT_CHANNEL_ID`.
 
 AFK исключён из обычной активности и считается отдельной выборкой.
 
@@ -38,7 +40,7 @@ STATBOT_API_KEY=your_statbot_api_key
 GUILD_ID=123456789012345678
 ALLOWED_ROLE_IDS=123456789012345678,987654321098765432
 REPORT_CHANNEL_ID=123456789012345678
-VOICE_STATS_SOURCE=statbot
+VOICE_STATS_SOURCE=auto
 ```
 
 Опционально:
@@ -49,6 +51,9 @@ STATBOT_AUTH_HEADER=Authorization
 STATBOT_REQUEST_TIMEOUT=45
 STATBOT_ACTIVE_VOICE_STATES=normal,self_mute,self_deaf,server_mute,server_deaf
 STATBOT_AFK_VOICE_STATES=afk
+STATBOT_FALLBACK_FAILURE_THRESHOLD=3
+STATBOT_RECOVERY_CHECK_SECONDS=900
+STATBOT_FALLBACK_ALERTS=true
 WEEKLY_REPORT_ENABLED=true
 WEEKLY_REPORT_DAYS=7
 WEEKLY_REPORT_WEEKDAY=6
@@ -67,6 +72,14 @@ STATBOT_AUTH_HEADER=X-API-Key
 
 `STATBOT_ACTIVE_VOICE_STATES` задаёт, какие Statbot voice states считаются активностью. По умолчанию `afk` туда не входит.
 `STATBOT_AFK_VOICE_STATES` задаёт отдельную AFK-выборку для `/afk` и блока AFK в `/report`.
+
+`VOICE_STATS_SOURCE` поддерживает:
+
+- `statbot` - всегда читать отчёты только из Statbot API;
+- `local` - читать отчёты только из локальной SQLite-базы;
+- `auto` - сначала пробовать Statbot, а при ошибках использовать локальную базу.
+
+В режиме `auto` бот всегда возвращает отчёт, если локальная база доступна. После `STATBOT_FALLBACK_FAILURE_THRESHOLD` ошибок Statbot подряд он отправляет алерт в `REPORT_CHANNEL_ID` и помечает отчёты как локальные. Раз в `STATBOT_RECOVERY_CHECK_SECONDS` секунд бот снова проверяет Statbot; когда API оживает, он отправляет алерт о возврате на Statbot.
 
 `AFK_CHANNEL_IDS` нужен для локального SQLite-сборщика. Если на сервере Discord задан системный AFK-канал, бот определит его автоматически; ID нужны только для дополнительных AFK-каналов.
 
@@ -141,7 +154,7 @@ python -m bot.main
 
 ## Подготовка к своему сбору данных
 
-Бот уже умеет параллельно вести локальный журнал голосовых сессий в SQLite. Это нужно для будущего перехода с Statbot API на собственный источник данных.
+Бот умеет параллельно вести локальный журнал голосовых сессий в SQLite. Это нужно для аварийного fallback с Statbot API на собственный источник данных.
 
 Включить сбор:
 
@@ -150,7 +163,7 @@ VOICE_SESSION_TRACKING_ENABLED=true
 VOICE_ACTIVITY_DB_PATH=/data/voice_activity.sqlite3
 ```
 
-В SQLite пишутся сессии с состоянием `active` или `afk`, каналом, участником, временем начала/конца и длительностью. Текущие slash-команды пока читают отчёты из Statbot, чтобы не потерять исторические данные. После накопления своей истории можно будет переключить отчёты на локальную базу.
+В SQLite пишутся сессии с состоянием `active` или `afk`, каналом, участником, временем начала/конца и длительностью. История локальной базы начинается только с момента включения сборщика, поэтому старые периоды до запуска сборщика Statbot всё ещё покрывает лучше.
 
 ## Запуск через Docker
 

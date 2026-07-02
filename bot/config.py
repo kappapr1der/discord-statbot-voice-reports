@@ -14,7 +14,7 @@ DEFAULT_ACTIVE_VOICE_STATES = (
     "server_deaf",
 )
 DEFAULT_AFK_VOICE_STATES = ("afk",)
-SUPPORTED_VOICE_STATS_SOURCES = {"statbot"}
+SUPPORTED_VOICE_STATS_SOURCES = {"statbot", "local", "auto"}
 
 
 class ConfigError(RuntimeError):
@@ -141,7 +141,7 @@ def _parse_csv_env(
 
 
 def _parse_voice_stats_source() -> str:
-    source = (os.getenv("VOICE_STATS_SOURCE") or "statbot").strip().casefold()
+    source = (os.getenv("VOICE_STATS_SOURCE") or "auto").strip().casefold()
     if source not in SUPPORTED_VOICE_STATS_SOURCES:
         allowed = ", ".join(sorted(SUPPORTED_VOICE_STATS_SOURCES))
         raise ConfigError(f"VOICE_STATS_SOURCE must be one of: {allowed}")
@@ -166,6 +166,9 @@ class Settings:
     voice_stats_source: str
     statbot_active_voice_states: tuple[str, ...]
     statbot_afk_voice_states: tuple[str, ...]
+    statbot_fallback_failure_threshold: int
+    statbot_recovery_check_seconds: int
+    statbot_fallback_alerts_enabled: bool
     voice_session_tracking_enabled: bool
     voice_activity_db_path: str
     afk_channel_ids: set[int]
@@ -228,6 +231,22 @@ class Settings:
                 "STATBOT_AFK_VOICE_STATES",
                 default=DEFAULT_AFK_VOICE_STATES,
                 allow_empty=True,
+            ),
+            statbot_fallback_failure_threshold=_parse_range_env(
+                "STATBOT_FALLBACK_FAILURE_THRESHOLD",
+                default=3,
+                minimum=1,
+                maximum=20,
+            ),
+            statbot_recovery_check_seconds=_parse_range_env(
+                "STATBOT_RECOVERY_CHECK_SECONDS",
+                default=900,
+                minimum=60,
+                maximum=86400,
+            ),
+            statbot_fallback_alerts_enabled=_parse_bool_env(
+                "STATBOT_FALLBACK_ALERTS",
+                default=True,
             ),
             voice_session_tracking_enabled=_parse_bool_env(
                 "VOICE_SESSION_TRACKING_ENABLED",
